@@ -6,7 +6,6 @@ from typing import Any, Dict, List
 from rich.console import Console
 from rich.progress import Progress, SpinnerColumn, TextColumn
 
-from .roles import ROLE_GENERATORS
 from .file_generators import (
     AnsibleCfgGenerator,
     InventoryGenerator,
