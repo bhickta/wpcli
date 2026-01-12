@@ -493,8 +493,8 @@ class PlaybookGenerator(FileGenerator):
             --agree-tos
             --email {{ item.ssl_email }}
             --redirect
-          args:
-            creates: "/etc/letsencrypt/live/{{ item.domain }}/fullchain.pem"
+            --keep-until-expiring
+            --expand
           loop: "{{ wordpress_sites }}"
           notify: reload nginx
 

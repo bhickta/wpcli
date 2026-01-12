@@ -224,5 +224,19 @@ def run_wizard() -> Dict[str, Any]:
     if not Confirm.ask("\n[bold]Proceed with this configuration?[/bold]", default=True):
         console.print("[yellow]Configuration cancelled.[/yellow]")
         return {}
+    
+    # Offer to save configuration
+    if Confirm.ask("\n[bold]Save this configuration to a file?[/bold]", default=True):
+        import json
+        default_filename = f"wpcli-{config['domain']}.json"
+        filename = Prompt.ask("Filename", default=default_filename)
+        
+        try:
+            with open(filename, "w") as f:
+                json.dump(config, f, indent=2)
+            console.print(f"[green]✓ Configuration saved to {filename}[/green]")
+            console.print(f"[dim]You can reuse this with: wpcli init --config {filename}[/dim]\n")
+        except Exception as e:
+            console.print(f"[red]Failed to save configuration: {e}[/red]")
 
     return config
