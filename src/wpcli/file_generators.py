@@ -480,23 +480,23 @@ class PlaybookGenerator(FileGenerator):
               - python3-certbot-nginx
             state: present
 
-    - name: Ensure Nginx is Reloaded
-      service:
-        name: nginx
-        state: reloaded
+        - name: Ensure Nginx is Reloaded
+          service:
+            name: nginx
+            state: reloaded
 
-    - name: Request SSL certificate
-      command: >
-        certbot --nginx
-        -d {{ item.domain }}
-        --non-interactive
-        --agree-tos
-        --email {{ item.ssl_email }}
-        --redirect
-      args:
-        creates: "/etc/letsencrypt/live/{{ item.domain }}/fullchain.pem"
-      loop: "{{ wordpress_sites }}"
-      notify: reload nginx
+        - name: Request SSL certificate
+          command: >
+            certbot --nginx
+            -d {{ item.domain }}
+            --non-interactive
+            --agree-tos
+            --email {{ item.ssl_email }}
+            --redirect
+          args:
+            creates: "/etc/letsencrypt/live/{{ item.domain }}/fullchain.pem"
+          loop: "{{ wordpress_sites }}"
+          notify: reload nginx
 
         - name: Set up auto-renewal
           cron:
