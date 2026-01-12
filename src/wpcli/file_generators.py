@@ -52,8 +52,16 @@ class InventoryGenerator(FileGenerator):
     """Generate inventory/hosts file."""
     
     def generate(self) -> None:
+        server_ip = self.config['server_ip']
+        connection_param = ""
+        
+        if server_ip in ["127.0.0.1", "localhost"]:
+            connection_param = "ansible_connection=local"
+        else:
+            connection_param = f"ansible_user={self.config['ssh_user']} ansible_ssh_private_key_file={self.config['ssh_key']}"
+
         content = f"""[wordpress_servers]
-{self.config['server_ip']} ansible_user={self.config['ssh_user']} ansible_ssh_private_key_file={self.config['ssh_key']}
+{server_ip} {connection_param}
 
 [wordpress_servers:vars]
 ansible_python_interpreter=/usr/bin/python3
@@ -247,8 +255,17 @@ class PlaybookGenerator(FileGenerator):
             - "max_connections = 200"
           notify: restart database
       when: db_mode == "local"
-"""
 
+    - name: Verify Database Connection
+      shell: "mysql -h {{ db_host }} -u {{ item.db_user }} -p'{{ db_password }}' -e 'SELECT 1'"
+      loop: "{{ wordpress_sites }}"
+      register: db_check
+      retries: 3
+      delay: 5
+      until: db_check.rc == 0
+      when: db_mode == "rds"
+"""
+        
         tasks_php = """
     # PHP
     - name: Add PHP repository
@@ -786,10 +803,6 @@ define( 'DB_PASSWORD', '{{ db_password }}' );
 define( 'DB_HOST', '{{ db_host }}' );
 define( 'DB_CHARSET', '{{ db_charset }}' );
 define( 'DB_COLLATE', '{{ db_collate }}' );
-
-{% if db_mode == 'rds' and db_engine == 'mysql' %}
-define( 'MYSQL_CLIENT_FLAGS', MYSQLI_CLIENT_SSL );
-{% endif %}
 
 define( 'AUTH_KEY',         '{{ auth_key }}' );
 define( 'SECURE_AUTH_KEY',  '{{ secure_auth_key }}' );
