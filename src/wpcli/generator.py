@@ -118,19 +118,9 @@ class ProjectGenerator:
             generator.generate()
 
     def _generate_roles(self) -> None:
-        """Generate all Ansible roles using role generators."""
-        # Check if we need coexistence mode for Nginx
-        use_coexistence_nginx = self.config.get("nginx_coexistence", False)
-        
-        for role_name, role_class in ROLE_GENERATORS.items():
-            # Use coexistence Nginx role if needed
-            if role_name == "nginx" and use_coexistence_nginx:
-                from .coexistence_roles import CoexistenceNginxRole
-                generator = CoexistenceNginxRole(self.output_dir, self.config)
-            else:
-                generator = role_class(self.output_dir, self.config)
-            
-            generator.generate()
+        """Generate all Ansible roles using simplified functions."""
+        from .roles import generate_all_roles
+        generate_all_roles(self.output_dir, self.config)
 
     def _print_vault_instructions(self) -> None:
         """Print instructions for Ansible Vault encryption."""

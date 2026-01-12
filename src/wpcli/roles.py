@@ -1,31 +1,40 @@
-"""Ansible role generators - each role in its own focused module."""
+"""Simplified role generation - all roles in one place."""
 
 from pathlib import Path
 from typing import Dict, Any
 
 
-class RoleGenerator:
-    """Base class for role generators."""
-    
-    def __init__(self, output_dir: Path, config: Dict[str, Any]):
-        self.output_dir = output_dir
-        self.config = config
-    
-    def _write_file(self, path: Path, content: str) -> None:
-        """Write content to file."""
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_text(content)
-    
-    def generate(self) -> None:
-        """Generate the role. Must be implemented by subclasses."""
-        raise NotImplementedError
+def write_file(path: Path, content: str) -> None:
+    """Write content to file."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content)
 
 
-class PrerequisitesRole(RoleGenerator):
+def generate_all_roles(output_dir: Path, config: Dict[str, Any]) -> None:
+    """Generate all Ansible roles."""
+    # Check if coexistence mode
+    use_coexistence = config.get("nginx_coexistence", False)
+    
+    generate_prerequisites(output_dir)
+    generate_database(output_dir, config)
+    generate_php(output_dir)
+    
+    if use_coexistence:
+        generate_nginx_coexistence(output_dir)
+    else:
+        generate_nginx(output_dir)
+    
+    generate_wordpress(output_dir)
+    generate_ssl(output_dir)
+    generate_redis(output_dir)
+    generate_monitoring(output_dir)
+    generate_backup(output_dir)
+    generate_security(output_dir)
+
+
+def generate_prerequisites(output_dir: Path) -> None:
     """Generate prerequisites role."""
-    
-    def generate(self) -> None:
-        tasks = """---
+    tasks = """---
 - name: Install system utilities
   apt:
     name:
@@ -64,21 +73,16 @@ class PrerequisitesRole(RoleGenerator):
     state: started
     enabled: yes
 """
-        self._write_file(
-            self.output_dir / "roles" / "prerequisites" / "tasks" / "main.yml",
-            tasks
-        )
+    write_file(output_dir / "roles" / "prerequisites" / "tasks" / "main.yml", tasks)
 
 
-class DatabaseRole(RoleGenerator):
-    """Generate database role (MySQL/MariaDB)."""
+def generate_database(output_dir: Path, config: Dict[str, Any]) -> None:
+    """Generate database role."""
+    engine = config.get("db_engine", "mysql")
+    package = "mariadb-server" if engine == "mariadb" else "mysql-server"
+    service = "mariadb" if engine == "mariadb" else "mysql"
     
-    def generate(self) -> None:
-        engine = self.config.get("db_engine", "mysql")
-        package = "mariadb-server" if engine == "mariadb" else "mysql-server"
-        service = "mariadb" if engine == "mariadb" else "mysql"
-        
-        tasks = f"""---
+    tasks = f"""---
 - name: Install {engine.upper()}
   apt:
     name:
@@ -117,21 +121,23 @@ class DatabaseRole(RoleGenerator):
 
 - name: Create WordPress database
   community.mysql.mysql_db:
-    name: "{{{{ db_name }}}}"
+    name: "{{{{ item.db_name }}}}"
     state: present
     encoding: utf8mb4
     collation: utf8mb4_unicode_ci
     login_user: root
     login_password: "{{{{ db_password }}}}"
+  loop: "{{{{ wordpress_sites }}}}"
 
 - name: Create WordPress database user
   community.mysql.mysql_user:
-    name: "{{{{ db_user }}}}"
+    name: "{{{{ item.db_user }}}}"
     password: "{{{{ db_password }}}}"
-    priv: "{{{{ db_name }}}}.*:ALL"
+    priv: "{{{{ item.db_name }}}}.*:ALL"
     state: present
     login_user: root
     login_password: "{{{{ db_password }}}}"
+  loop: "{{{{ wordpress_sites }}}}"
 
 - name: Configure {engine.upper()} performance
   lineinfile:
@@ -143,125 +149,20 @@ class DatabaseRole(RoleGenerator):
     - "max_connections = 200"
   notify: restart {service}
 """
-        self._write_file(
-            self.output_dir / "roles" / "database" / "tasks" / "main.yml",
-            tasks
-        )
-        
-        handler = f"""---
+    write_file(output_dir / "roles" / "database" / "tasks" / "main.yml", tasks)
+    
+    handler = f"""---
 - name: restart {service}
   service:
     name: {service}
     state: restarted
 """
-        self._write_file(
-            self.output_dir / "roles" / "database" / "handlers" / "main.yml",
-            handler
-        )
+    write_file(output_dir / "roles" / "database" / "handlers" / "main.yml", handler)
 
 
-class NginxRole(RoleGenerator):
-    """Generate Nginx role."""
-    
-    def generate(self) -> None:
-        tasks = """---
-- name: Install Nginx
-  apt:
-    name: nginx
-    state: present
-
-- name: Remove default config
-  file:
-    path: /etc/nginx/sites-enabled/default
-    state: absent
-  notify: reload nginx
-
-- name: Create site config
-  template:
-    src: wordpress.conf.j2
-    dest: "/etc/nginx/sites-available/{{ item.domain }}"
-  loop: "{{ wordpress_sites }}"
-  notify: reload nginx
-
-- name: Enable site config
-  file:
-    src: "/etc/nginx/sites-available/{{ item.domain }}"
-    dest: "/etc/nginx/sites-enabled/{{ item.domain }}"
-    state: link
-  loop: "{{ wordpress_sites }}"
-  notify: reload nginx
-
-- name: Configure Nginx security headers
-  blockinfile:
-    path: /etc/nginx/nginx.conf
-    marker: "# {mark} ANSIBLE MANAGED SECURITY HEADERS"
-    insertafter: "http {"
-    block: |
-      # Security headers
-      add_header X-Frame-Options "SAMEORIGIN" always;
-      add_header X-Content-Type-Options "nosniff" always;
-      add_header X-XSS-Protection "1; mode=block" always;
-      add_header Referrer-Policy "no-referrer-when-downgrade" always;
-      
-      # Gzip compression
-      gzip on;
-      gzip_vary on;
-      gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml+rss application/json;
-  notify: reload nginx
-"""
-        self._write_file(
-            self.output_dir / "roles" / "nginx" / "tasks" / "main.yml",
-            tasks
-        )
-        
-        template = """server {
-    listen {{ nginx_http_port }};
-    server_name {{ item.domain }} www.{{ item.domain }};
-    root {{ web_root }}/{{ item.domain }};
-    index index.php index.html;
-
-    client_max_body_size {{ item.max_upload_size }};
-
-    # Security
-    location ~ /\\.ht {
-        deny all;
-    }
-    
-    location ~ /wp-config.php {
-        deny all;
-    }
-
-    location / {
-        try_files $uri $uri/ /index.php$is_args$args;
-    }
-
-    location ~ \\.php$ {
-        include snippets/fastcgi-php.conf;
-        fastcgi_pass unix:/run/php/php{{ item.php_version }}-fpm.sock;
-        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
-        include fastcgi_params;
-        fastcgi_read_timeout 180;
-    }
-    
-    # Cache static assets
-    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
-        expires max;
-        log_not_found off;
-        access_log off;
-    }
-}
-"""
-        self._write_file(
-            self.output_dir / "roles" / "nginx" / "templates" / "wordpress.conf.j2",
-            template
-        )
-
-
-class PHPRole(RoleGenerator):
+def generate_php(output_dir: Path) -> None:
     """Generate PHP role."""
-    
-    def generate(self) -> None:
-        tasks = """---
+    tasks = """---
 - name: Add PHP repository
   apt_repository:
     repo: 'ppa:ondrej/php'
@@ -313,17 +214,169 @@ class PHPRole(RoleGenerator):
     - { regexp: '^;opcache.memory_consumption=', line: 'opcache.memory_consumption=128' }
   notify: restart php-fpm
 """
-        self._write_file(
-            self.output_dir / "roles" / "php" / "tasks" / "main.yml",
-            tasks
-        )
-
-
-class WordPressRole(RoleGenerator):
-    """Generate WordPress role."""
+    write_file(output_dir / "roles" / "php" / "tasks" / "main.yml", tasks)
     
-    def generate(self) -> None:
-        tasks = """---
+    handler = """---
+- name: restart php-fpm
+  service:
+    name: "php{{ php_version }}-fpm"
+    state: restarted
+"""
+    write_file(output_dir / "roles" / "php" / "handlers" / "main.yml", handler)
+
+
+def generate_nginx(output_dir: Path) -> None:
+    """Generate Nginx role (standard)."""
+    tasks = """---
+- name: Install Nginx
+  apt:
+    name: nginx
+    state: present
+
+- name: Remove default config
+  file:
+    path: /etc/nginx/sites-enabled/default
+    state: absent
+  notify: reload nginx
+
+- name: Create site config
+  template:
+    src: wordpress.conf.j2
+    dest: "/etc/nginx/sites-available/{{ item.domain }}"
+  loop: "{{ wordpress_sites }}"
+  notify: reload nginx
+
+- name: Enable site config
+  file:
+    src: "/etc/nginx/sites-available/{{ item.domain }}"
+    dest: "/etc/nginx/sites-enabled/{{ item.domain }}"
+    state: link
+  loop: "{{ wordpress_sites }}"
+  notify: reload nginx
+
+- name: Configure Nginx security headers
+  blockinfile:
+    path: /etc/nginx/nginx.conf
+    marker: "# {mark} ANSIBLE MANAGED SECURITY HEADERS"
+    insertafter: "http {"
+    block: |
+      # Security headers
+      add_header X-Frame-Options "SAMEORIGIN" always;
+      add_header X-Content-Type-Options "nosniff" always;
+      add_header X-XSS-Protection "1; mode=block" always;
+      add_header Referrer-Policy "no-referrer-when-downgrade" always;
+      
+      # Gzip compression
+      gzip on;
+      gzip_vary on;
+      gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml+rss application/json;
+  notify: reload nginx
+"""
+    write_file(output_dir / "roles" / "nginx" / "tasks" / "main.yml", tasks)
+    _write_nginx_template_and_handlers(output_dir)
+
+
+def generate_nginx_coexistence(output_dir: Path) -> None:
+    """Generate Nginx role (coexistence mode)."""
+    tasks = """---
+- name: Check if Nginx is installed
+  command: nginx -v
+  register: nginx_check
+  ignore_errors: yes
+  changed_when: false
+
+- name: Install Nginx if not present
+  apt:
+    name: nginx
+    state: present
+  when: nginx_check.rc != 0
+
+- name: Create WordPress site config
+  template:
+    src: wordpress.conf.j2
+    dest: "/etc/nginx/sites-available/{{ item.domain }}"
+  loop: "{{ wordpress_sites }}"
+  notify: reload nginx
+
+- name: Enable WordPress site config
+  file:
+    src: "/etc/nginx/sites-available/{{ item.domain }}"
+    dest: "/etc/nginx/sites-enabled/{{ item.domain }}"
+    state: link
+  loop: "{{ wordpress_sites }}"
+  notify: reload nginx
+
+- name: Test Nginx configuration
+  command: nginx -t
+  register: nginx_test
+  changed_when: false
+
+- name: Display Nginx test results
+  debug:
+    msg: "{{ nginx_test.stderr_lines }}"
+"""
+    write_file(output_dir / "roles" / "nginx" / "tasks" / "main.yml", tasks)
+    _write_nginx_template_and_handlers(output_dir)
+
+
+def _write_nginx_template_and_handlers(output_dir: Path) -> None:
+    """Write Nginx template and handlers (shared)."""
+    template = """server {
+    listen {{ nginx_http_port }};
+    server_name {{ item.domain }} www.{{ item.domain }};
+    root {{ web_root }}/{{ item.domain }};
+    index index.php index.html;
+
+    client_max_body_size {{ item.max_upload_size }};
+
+    # Security
+    location ~ /\\.ht {
+        deny all;
+    }
+    
+    location ~ /wp-config.php {
+        deny all;
+    }
+
+    location / {
+        try_files $uri $uri/ /index.php$is_args$args;
+    }
+
+    location ~ \\.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php{{ item.php_version }}-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+        fastcgi_read_timeout 180;
+    }
+    
+    # Cache static assets
+    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires max;
+        log_not_found off;
+        access_log off;
+    }
+}
+"""
+    write_file(output_dir / "roles" / "nginx" / "templates" / "wordpress.conf.j2", template)
+    
+    handler = """---
+- name: restart nginx
+  service:
+    name: nginx
+    state: restarted
+
+- name: reload nginx
+  service:
+    name: nginx
+    state: reloaded
+"""
+    write_file(output_dir / "roles" / "nginx" / "handlers" / "main.yml", handler)
+
+
+def generate_wordpress(output_dir: Path) -> None:
+    """Generate WordPress role."""
+    tasks = """---
 - name: Create web root directory
   file:
     path: "{{ web_root }}/{{ item.domain }}"
@@ -389,12 +442,10 @@ class WordPressRole(RoleGenerator):
   args:
     creates: "{{ web_root }}/{{ item.domain }}/wp-content/uploads"
 """
-        self._write_file(
-            self.output_dir / "roles" / "wordpress" / "tasks" / "main.yml",
-            tasks
-        )
-        
-        wp_config = """<?php
+    write_file(output_dir / "roles" / "wordpress" / "tasks" / "main.yml", tasks)
+    
+    # Fixed wp-config template - use item.enable_ssl instead of enable_ssl
+    wp_config = """<?php
 define( 'DB_NAME', '{{ item.db_name }}' );
 define( 'DB_USER', '{{ item.db_user }}' );
 define( 'DB_PASSWORD', '{{ db_password }}' );
@@ -417,7 +468,7 @@ define( 'NONCE_SALT',       '{{ nonce_salt }}' );
 
 $table_prefix = '{{ item.db_prefix }}';
 
-{% if enable_redis %}
+{% if item.enable_cache %}
 define( 'WP_REDIS_HOST', '{{ redis_host }}' );
 define( 'WP_REDIS_PORT', {{ redis_port }} );
 define( 'WP_CACHE', true );
@@ -425,24 +476,19 @@ define( 'WP_CACHE', true );
 
 define( 'WP_DEBUG', {{ 'true' if deployment_env == 'development' else 'false' }} );
 define( 'DISALLOW_FILE_EDIT', true );
-define( 'FORCE_SSL_ADMIN', {{ 'true' if enable_ssl else 'false' }} );
+define( 'FORCE_SSL_ADMIN', {{ 'true' if item.enable_ssl else 'false' }} );
 
 if ( ! defined( 'ABSPATH' ) ) {
 \tdefine( 'ABSPATH', __DIR__ . '/' );
 }
 require_once ABSPATH . 'wp-settings.php';
 """
-        self._write_file(
-            self.output_dir / "roles" / "wordpress" / "templates" / "wp-config.php.j2",
-            wp_config
-        )
+    write_file(output_dir / "roles" / "wordpress" / "templates" / "wp-config.php.j2", wp_config)
 
 
-class SSLRole(RoleGenerator):
+def generate_ssl(output_dir: Path) -> None:
     """Generate SSL role."""
-    
-    def generate(self) -> None:
-        tasks = """---
+    tasks = """---
 - name: Install Certbot
   apt:
     name:
@@ -470,17 +516,12 @@ class SSLRole(RoleGenerator):
     hour: "3"
     job: "certbot renew --quiet --post-hook 'systemctl reload nginx'"
 """
-        self._write_file(
-            self.output_dir / "roles" / "ssl" / "tasks" / "main.yml",
-            tasks
-        )
+    write_file(output_dir / "roles" / "ssl" / "tasks" / "main.yml", tasks)
 
 
-class RedisRole(RoleGenerator):
+def generate_redis(output_dir: Path) -> None:
     """Generate Redis role."""
-    
-    def generate(self) -> None:
-        tasks = """---
+    tasks = """---
 - name: Install Redis
   apt:
     name: redis-server
@@ -508,7 +549,7 @@ class RedisRole(RoleGenerator):
     --path="{{ web_root }}/{{ item.domain }}"
     --allow-root
   loop: "{{ wordpress_sites }}"
-  when: enable_redis
+  when: item.enable_cache
 
 - name: Enable Redis object cache
   command: >
@@ -516,31 +557,23 @@ class RedisRole(RoleGenerator):
     --path="{{ web_root }}/{{ item.domain }}"
     --allow-root
   loop: "{{ wordpress_sites }}"
-  when: enable_redis
+  when: item.enable_cache
   ignore_errors: yes
 """
-        self._write_file(
-            self.output_dir / "roles" / "redis" / "tasks" / "main.yml",
-            tasks
-        )
-        
-        handler = """---
+    write_file(output_dir / "roles" / "redis" / "tasks" / "main.yml", tasks)
+    
+    handler = """---
 - name: restart redis
   service:
     name: redis-server
     state: restarted
 """
-        self._write_file(
-            self.output_dir / "roles" / "redis" / "handlers" / "main.yml",
-            handler
-        )
+    write_file(output_dir / "roles" / "redis" / "handlers" / "main.yml", handler)
 
 
-class MonitoringRole(RoleGenerator):
+def generate_monitoring(output_dir: Path) -> None:
     """Generate monitoring role."""
-    
-    def generate(self) -> None:
-        tasks = """---
+    tasks = """---
 - name: Install monitoring tools
   apt:
     name:
@@ -562,17 +595,12 @@ class MonitoringRole(RoleGenerator):
     state: started
     enabled: yes
 """
-        self._write_file(
-            self.output_dir / "roles" / "monitoring" / "tasks" / "main.yml",
-            tasks
-        )
+    write_file(output_dir / "roles" / "monitoring" / "tasks" / "main.yml", tasks)
 
 
-class BackupRole(RoleGenerator):
+def generate_backup(output_dir: Path) -> None:
     """Generate backup role."""
-    
-    def generate(self) -> None:
-        tasks = """---
+    tasks = """---
 - name: Create backup directory
   file:
     path: /var/backups/wordpress
@@ -580,14 +608,10 @@ class BackupRole(RoleGenerator):
     mode: '0700'
 
 - name: Create database backup script
-  copy:
+  template:
+    src: backup-db.sh.j2
     dest: /usr/local/bin/backup-wordpress-db.sh
     mode: '0755'
-    content: |
-      #!/bin/bash
-      DATE=$(date +%Y%m%d_%H%M%S)
-      mysqldump -u {{ db_user }} -p'{{ db_password }}' {{ db_name }} | gzip > /var/backups/wordpress/db_${DATE}.sql.gz
-      find /var/backups/wordpress -name "db_*.sql.gz" -mtime +7 -delete
 
 - name: Schedule database backups
   cron:
@@ -596,17 +620,21 @@ class BackupRole(RoleGenerator):
     hour: "2"
     job: "/usr/local/bin/backup-wordpress-db.sh"
 """
-        self._write_file(
-            self.output_dir / "roles" / "backup" / "tasks" / "main.yml",
-            tasks
-        )
-
-
-class SecurityRole(RoleGenerator):
-    """Generate security role."""
+    write_file(output_dir / "roles" / "backup" / "tasks" / "main.yml", tasks)
     
-    def generate(self) -> None:
-        tasks = """---
+    script = """#!/bin/bash
+DATE=$(date +%Y%m%d_%H%M%S)
+{% for site in wordpress_sites %}
+mysqldump -h {{ db_host }} -u {{ site.db_user }} -p'{{ db_password }}' {{ site.db_name }} | gzip > /var/backups/wordpress/{{ site.domain }}_${DATE}.sql.gz
+{% endfor %}
+find /var/backups/wordpress -name "*.sql.gz" -mtime +7 -delete
+"""
+    write_file(output_dir / "roles" / "backup" / "templates" / "backup-db.sh.j2", script)
+
+
+def generate_security(output_dir: Path) -> None:
+    """Generate security role."""
+    tasks = """---
 - name: Install Fail2Ban
   apt:
     name: fail2ban
@@ -654,33 +682,12 @@ class SecurityRole(RoleGenerator):
       Unattended-Upgrade::AutoFixInterruptedDpkg "true";
       Unattended-Upgrade::Remove-Unused-Dependencies "true";
 """
-        self._write_file(
-            self.output_dir / "roles" / "security" / "tasks" / "main.yml",
-            tasks
-        )
-        
-        handler = """---
+    write_file(output_dir / "roles" / "security" / "tasks" / "main.yml", tasks)
+    
+    handler = """---
 - name: restart fail2ban
   service:
     name: fail2ban
     state: restarted
 """
-        self._write_file(
-            self.output_dir / "roles" / "security" / "handlers" / "main.yml",
-            handler
-        )
-
-
-# Role registry for easy access
-ROLE_GENERATORS = {
-    "prerequisites": PrerequisitesRole,
-    "database": DatabaseRole,
-    "nginx": NginxRole,
-    "php": PHPRole,
-    "wordpress": WordPressRole,
-    "ssl": SSLRole,
-    "redis": RedisRole,
-    "monitoring": MonitoringRole,
-    "backup": BackupRole,
-    "security": SecurityRole,
-}
+    write_file(output_dir / "roles" / "security" / "handlers" / "main.yml", handler)
