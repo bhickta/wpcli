@@ -399,11 +399,6 @@ class PlaybookGenerator(FileGenerator):
           add_header X-Content-Type-Options "nosniff" always;
           add_header X-XSS-Protection "1; mode=block" always;
           add_header Referrer-Policy "no-referrer-when-downgrade" always;
-          
-          # Gzip compression
-          gzip on;
-          gzip_vary on;
-          gzip_types text/plain text/css text/xml text/javascript application/x-javascript application/xml+rss application/json;
       notify: reload nginx
 """
 
