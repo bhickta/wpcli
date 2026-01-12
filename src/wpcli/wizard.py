@@ -26,13 +26,15 @@ console = Console()
 
 def generate_password(length: int = 20) -> str:
     """Generate a secure random password."""
-    alphabet = string.ascii_letters + string.digits + "!@#$%^&*"
+    # Exclude % to avoid Jinja2 templating issues
+    alphabet = string.ascii_letters + string.digits + "!@#$^&*"
     return "".join(secrets.choice(alphabet) for _ in range(length))
 
 
 def generate_salt() -> str:
     """Generate a WordPress salt string."""
-    chars = string.ascii_letters + string.digits + "!@#$%^&*()-_ []{}<>~`+=,.;:/?|"
+    # Exclude { } % to avoid Jinja2 templating issues
+    chars = string.ascii_letters + string.digits + "!@#$^&*()-_ []<>~`+=,.;:/?|"
     return "".join(secrets.choice(chars) for _ in range(64))
 
 
