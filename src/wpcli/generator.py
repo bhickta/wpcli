@@ -12,6 +12,7 @@ from .file_generators import (
     VarsGenerator,
     PlaybookGenerator,
     HandlersGenerator,
+    TemplateGenerator,
     RequirementsGenerator,
     ReadmeGenerator,
 )
@@ -22,21 +23,6 @@ console = Console()
 class DirectoryStructure:
     """Handles creation of directory structure."""
     
-    ROLE_NAMES = [
-        "prerequisites",
-        "database",
-        "nginx",
-        "php",
-        "wordpress",
-        "ssl",
-        "redis",
-        "monitoring",
-        "backup",
-        "security",
-    ]
-    
-    ROLE_SUBDIRS = ["tasks", "templates", "handlers", "defaults"]
-    
     @staticmethod
     def create(output_dir: Path) -> None:
         """Create complete directory structure."""
@@ -44,14 +30,9 @@ class DirectoryStructure:
             output_dir,
             output_dir / "inventory",
             output_dir / "vars",
-            output_dir / "roles",
+            output_dir / "templates",
             output_dir / "handlers",
         ]
-
-        # Create role directories
-        for role in DirectoryStructure.ROLE_NAMES:
-            for subdir in DirectoryStructure.ROLE_SUBDIRS:
-                dirs.append(output_dir / "roles" / role / subdir)
 
         for dir_path in dirs:
             dir_path.mkdir(parents=True, exist_ok=True)
@@ -90,10 +71,6 @@ class ProjectGenerator:
             progress.update(task, description="Generating Ansible configuration...")
             self._generate_config_files()
 
-            # Generate roles
-            progress.update(task, description="Generating roles...")
-            self._generate_roles()
-
             # Final steps
             progress.update(task, description="Finalizing project...")
             self._print_vault_instructions()
@@ -109,17 +86,13 @@ class ProjectGenerator:
             VarsGenerator(self.output_dir, self.config),
             PlaybookGenerator(self.output_dir, self.config),
             HandlersGenerator(self.output_dir, self.config),
+            TemplateGenerator(self.output_dir, self.config),
             RequirementsGenerator(self.output_dir, self.config),
             ReadmeGenerator(self.output_dir, self.config),
         ]
         
         for generator in generators:
             generator.generate()
-
-    def _generate_roles(self) -> None:
-        """Generate all Ansible roles using simplified functions."""
-        from .roles import generate_all_roles
-        generate_all_roles(self.output_dir, self.config)
 
     def _print_vault_instructions(self) -> None:
         """Print instructions for Ansible Vault encryption."""
