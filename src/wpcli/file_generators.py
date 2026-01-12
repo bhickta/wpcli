@@ -489,7 +489,6 @@ class PlaybookGenerator(FileGenerator):
           command: >
             certbot --nginx
             -d {{ item.domain }}
-            -d www.{{ item.domain }}
             --non-interactive
             --agree-tos
             --email {{ item.ssl_email }}
@@ -758,7 +757,7 @@ class TemplateGenerator(FileGenerator):
         # Nginx configuration
         nginx_conf = """server {
     listen {{ nginx_http_port }};
-    server_name {{ item.domain }} www.{{ item.domain }};
+    server_name {{ item.domain }};
     root {{ web_root }}/{{ item.domain }};
     index index.php index.html;
 
