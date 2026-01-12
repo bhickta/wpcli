@@ -487,14 +487,24 @@ class PlaybookGenerator(FileGenerator):
 
         - name: Request SSL certificate
           command: >
-            certbot --nginx
+            certbot certonly --nginx
             -d {{ item.domain }}
             --non-interactive
             --agree-tos
             --email {{ item.ssl_email }}
-            --redirect
             --keep-until-expiring
             --expand
+          args:
+            creates: "/etc/letsencrypt/live/{{ item.domain }}/fullchain.pem"
+          loop: "{{ wordpress_sites }}"
+          notify: reload nginx
+
+        - name: Apply SSL Configuration to Nginx
+          template:
+            src: wordpress.conf.j2
+            dest: "/etc/nginx/sites-available/{{ item.domain }}"
+          vars:
+            use_ssl_config: true
           loop: "{{ wordpress_sites }}"
           notify: reload nginx
 
@@ -756,23 +766,25 @@ class TemplateGenerator(FileGenerator):
     
     def generate(self) -> None:
         # Nginx configuration
-        nginx_conf = """server {
-    listen {{ nginx_http_port }};
+        nginx_conf = """
+{% if use_ssl_config is defined and use_ssl_config %}
+server {
+    listen {{ nginx_https_port | default(443) }} ssl;
     server_name {{ item.domain }};
     
     root {{ web_root }}/{{ item.domain }};
     index index.php index.html;
 
+    ssl_certificate /etc/letsencrypt/live/{{ item.domain }}/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/{{ item.domain }}/privkey.pem;
+    ssl_protocols TLSv1.2 TLSv1.3;
+    ssl_ciphers HIGH:!aNULL:!MD5;
+
     client_max_body_size {{ item.max_upload_size }};
 
     # Security
-    location ~ /\\.ht {
-        deny all;
-    }
-    
-    location ~ /wp-config.php {
-        deny all;
-    }
+    location ~ /\\.ht { deny all; }
+    location ~ /wp-config.php { deny all; }
 
     location / {
         try_files $uri $uri/ /index.php$is_args$args;
@@ -793,6 +805,46 @@ class TemplateGenerator(FileGenerator):
         access_log off;
     }
 }
+
+server {
+    listen {{ nginx_http_port }};
+    server_name {{ item.domain }};
+    return 301 https://$host$request_uri;
+}
+{% else %}
+server {
+    listen {{ nginx_http_port }};
+    server_name {{ item.domain }};
+    
+    root {{ web_root }}/{{ item.domain }};
+    index index.php index.html;
+
+    client_max_body_size {{ item.max_upload_size }};
+
+    # Security
+    location ~ /\\.ht { deny all; }
+    location ~ /wp-config.php { deny all; }
+
+    location / {
+        try_files $uri $uri/ /index.php$is_args$args;
+    }
+
+    location ~ \\.php$ {
+        include snippets/fastcgi-php.conf;
+        fastcgi_pass unix:/run/php/php{{ item.php_version }}-fpm.sock;
+        fastcgi_param SCRIPT_FILENAME $document_root$fastcgi_script_name;
+        include fastcgi_params;
+        fastcgi_read_timeout 180;
+    }
+    
+    # Cache static assets
+    location ~* \\.(js|css|png|jpg|jpeg|gif|ico|svg|woff|woff2|ttf|eot)$ {
+        expires max;
+        log_not_found off;
+        access_log off;
+    }
+}
+{% endif %}
 """
         self._write_file(self.output_dir / "templates" / "wordpress.conf.j2", nginx_conf)
 
