@@ -480,17 +480,23 @@ class PlaybookGenerator(FileGenerator):
               - python3-certbot-nginx
             state: present
 
-        - name: Request SSL certificate
-          command: >
-            certbot --nginx
-            -d {{ item.domain }}
-            --non-interactive
-            --agree-tos
-            --email {{ item.ssl_email }}
-            --redirect
-          args:
-            creates: "/etc/letsencrypt/live/{{ item.domain }}/fullchain.pem"
-          loop: "{{ wordpress_sites }}"
+    - name: Ensure Nginx is Reloaded
+      service:
+        name: nginx
+        state: reloaded
+
+    - name: Request SSL certificate
+      command: >
+        certbot --nginx
+        -d {{ item.domain }}
+        --non-interactive
+        --agree-tos
+        --email {{ item.ssl_email }}
+        --redirect
+      args:
+        creates: "/etc/letsencrypt/live/{{ item.domain }}/fullchain.pem"
+      loop: "{{ wordpress_sites }}"
+      notify: reload nginx
 
         - name: Set up auto-renewal
           cron:
@@ -753,6 +759,7 @@ class TemplateGenerator(FileGenerator):
         nginx_conf = """server {
     listen {{ nginx_http_port }};
     server_name {{ item.domain }};
+    
     root {{ web_root }}/{{ item.domain }};
     index index.php index.html;
 
