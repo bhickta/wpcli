@@ -198,6 +198,29 @@ def run_wizard() -> Dict[str, Any]:
 
     console.print(table)
 
+    # Check for existing Nginx (coexistence mode)
+    if config["server_ip"] in ["127.0.0.1", "localhost"]:
+        try:
+            from .nginx_coexistence import NginxCoexistence
+            
+            coexist_info = NginxCoexistence.detect_coexistence_mode()
+            if coexist_info:
+                strategy = NginxCoexistence.prompt_coexistence_strategy(coexist_info)
+                config["nginx_coexistence"] = True
+                config["nginx_strategy"] = strategy
+                
+                if strategy == "coexist":
+                    console.print("\n[green]✓ Will add WordPress to existing Nginx safely[/green]")
+                elif strategy == "different_ports":
+                    config["nginx_http_port"] = 8080
+                    config["nginx_https_port"] = 8443
+                    console.print("\n[yellow]⚠️  WordPress will use ports 8080/8443[/yellow]")
+            else:
+                config["nginx_coexistence"] = False
+        except:
+            # If detection fails, assume no coexistence needed
+            config["nginx_coexistence"] = False
+
     if not Confirm.ask("\n[bold]Proceed with this configuration?[/bold]", default=True):
         console.print("[yellow]Configuration cancelled.[/yellow]")
         return {}
